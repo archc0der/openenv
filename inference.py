@@ -49,13 +49,20 @@ def log_end(success, steps, score, rewards):
 
 def get_model_message(client: OpenAI, observation: dict, history: List[str]) -> str:
     prompt = f"""
-You are debugging a PyTorch training job.
+You are debugging a PyTorch training job. Respond ONLY with valid JSON matching this exact schema:
+{{
+  "current_hypothesis": {{"bug_type": "<string>", "affected_file": "<string>", "confidence": <0.0-1.0>}},
+  "investigation_action": {{"action": "reveal_file", "target": "<filename>"}},
+  "commit_diagnosis": false,
+  "final_diagnosis": null
+}}
+
+Valid action types: reveal_file, extend_loss_curve, extend_gpu_profile, reveal_log_chunk, run_diagnostic
+Valid bug types: missing_zero_grad, data_leakage, memory_leak, learning_rate_too_high, gradient_explosion
+
 Observation:
-{json.dumps(observation)[:12000]}
-History:
-{history}
-Return JSON with keys:
-current_hypothesis, investigation_action, commit_diagnosis, final_diagnosis
+{json.dumps(observation)[:8000]}
+History: {history}
 """
     completion = client.chat.completions.create(
         model=MODEL_NAME,
@@ -80,6 +87,7 @@ async def main():
         reset_resp = await session.post(f"{ENV_URL}/reset", params={"task_id": TASK_NAME})
         reset_resp.raise_for_status()
         result = reset_resp.json()
+        session_id = result.get("session_id")
         observation = result["observation"]
 
         for step in range(1, MAX_STEPS + 1):
@@ -89,7 +97,7 @@ async def main():
             action_text = get_model_message(client, observation, history)
             try:
                 action_json = json.loads(action_text)
-                step_resp = await session.post(f"{ENV_URL}/step", json=action_json)
+                step_resp = await session.post(f"{ENV_URL}/step", params={"session_id": session_id}, json=action_json)
                 step_resp.raise_for_status()
                 result = step_resp.json()
                 reward = result.get("reward", 0.0)
@@ -109,7 +117,7 @@ async def main():
             if done:
                 break
 
-    score = min(max(sum(rewards) / MAX_TOTAL_REWARD if MAX_TOTAL_REWARD else 0.0, 0.0), 1.0)
+    score = min(max(rewards[-1] if rewards else 0.0, 0.0), 1.0)
     success = score >= SUCCESS_SCORE_THRESHOLD
     log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
 

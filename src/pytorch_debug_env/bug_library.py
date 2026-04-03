@@ -54,7 +54,47 @@ def dummy_artifact_generator(artifact_type: str, rng):
         return "Epoch 1, Step 0: loss 2.45\nEpoch 1, Step 1: loss 2.43\n"
     return []
 
-def dummy_repo_mutator(repo_files, rng):
+def mutate_missing_zero_grad(repo_files, rng):
+    repo_files["train.py"] = """import torch
+from model.architecture import Net
+
+model = Net()
+optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+criterion = torch.nn.CrossEntropyLoss()
+
+for epoch in range(10):
+    for x, y in dataloader:
+        # optimizer.zero_grad()  # BUG: commented out
+        output = model(x)
+        loss = criterion(output, y)
+        loss.backward()
+        optimizer.step()
+"""
+    return repo_files
+
+def mutate_data_leakage(repo_files, rng):
+    repo_files["data/dataset.py"] = """from torch.utils.data import Dataset
+
+class ImageDataset(Dataset):
+    def __init__(self, data, split="train"):
+        # BUG: We use the entire data instead of just the split
+        self.data = data
+        self.split = split
+"""
+    return repo_files
+
+def mutate_memory_leak(repo_files, rng):
+    repo_files["data/dataset.py"] = """from torch.utils.data import Dataset
+
+class ImageDataset(Dataset):
+    def __init__(self):
+        # BUG: Storing huge tensors in a class-level variable leading to memory accumulation
+        self.cache = []
+
+    def load(self, x):
+        self.cache.append(x)
+        return x
+"""
     return repo_files
 
 BUG_TEMPLATES = [
@@ -66,10 +106,10 @@ BUG_TEMPLATES = [
         related_files=[],
         red_herring_file="model/architecture.py",
         fix_strategy="Call optimizer.zero_grad() before loss.backward()",
-        line_range=[10, 15],
+        line_range=[9, 14],
         description="Missing zero grad",
         artifact_generator=dummy_artifact_generator,
-        repo_mutator=dummy_repo_mutator,
+        repo_mutator=mutate_missing_zero_grad,
     ),
     BugTemplate(
         bug_type="data_leakage",
@@ -79,10 +119,10 @@ BUG_TEMPLATES = [
         related_files=["data/preprocessing.py"],
         red_herring_file="train.py",
         fix_strategy="Ensure validation split is strictly separate from training",
-        line_range=[20, 25],
+        line_range=[4, 6],
         description="Data leakage",
         artifact_generator=dummy_artifact_generator,
-        repo_mutator=dummy_repo_mutator,
+        repo_mutator=mutate_data_leakage,
     ),
     BugTemplate(
         bug_type="memory_leak",
@@ -92,9 +132,9 @@ BUG_TEMPLATES = [
         related_files=["train.py"],
         red_herring_file="model/attention.py",
         fix_strategy="Avoid holding reference to tensors in class cache",
-        line_range=[30, 35],
+        line_range=[5, 9],
         description="Memory leak",
         artifact_generator=dummy_artifact_generator,
-        repo_mutator=dummy_repo_mutator,
+        repo_mutator=mutate_memory_leak,
     )
 ]

@@ -12,6 +12,9 @@ from .models import (
 )
 from .reward import compute_step_reward
 from .scenario_generator import ScenarioGenerator
+from .graders import grade_easy, grade_medium, grade_hard
+
+GRADER_MAP = {"easy": grade_easy, "medium": grade_medium, "hard": grade_hard}
 
 
 @dataclass
@@ -44,6 +47,9 @@ class PyTorchDebugEnv:
         return self._build_observation(last_feedback="Episode reset.")
 
     async def step(self, action: PyTorchDebugAction):
+        if self.runtime.scenario is None:
+            raise RuntimeError("Call /reset before /step")
+
         if self.runtime.done:
             raise RuntimeError("Episode already completed")
 
@@ -63,10 +69,27 @@ class PyTorchDebugEnv:
             current_hypothesis=action.current_hypothesis.model_dump(),
             ground_truth=scenario.ground_truth,
             investigation_target=investigation_target,
-            committed_diagnosis=committed,
+            committed_diagnosis=None, # Temporarily don't compute diagnosis reward here to use grader
             step_num=self.runtime.current_step,
             max_steps=self.runtime.max_steps,
         )
+
+        if committed:
+            grader = GRADER_MAP.get(scenario.task_id, grade_easy)
+            diagnosis_reward = grader(committed, scenario.ground_truth)
+
+            # Combine the diagnosis reward logic from `compute_step_reward` that applies on top
+            if diagnosis_reward > 0.7:
+                diagnosis_reward += max(0.0, 0.08 * (self.runtime.max_steps - self.runtime.current_step))
+
+            # Update the total reward incorporating diagnosis
+            components["diagnosis_reward"] = round(diagnosis_reward, 4)
+            delta = components["hypothesis_delta"]
+            inv_reward = components["investigation_reward"]
+            conf_bonus = components["confirmation_bonus"]
+
+            total = 0.60 * delta + 0.20 * inv_reward + 0.20 * diagnosis_reward + conf_bonus
+            reward = round(min(max(total, 0.0), 1.0), 4)
 
         self.runtime.hypothesis_history.append(
             HypothesisRecord(
