@@ -1,0 +1,27 @@
+name: pytorch-debug-env
+version: "1.0.0"
+description: Multi-step OpenEnv environment for diagnosing broken PyTorch training jobs.
+author: Priyansh Saxena
+tags:
+  - openenv
+  - pytorch
+  - debugging
+  - ml-training
+  - reinforcement-learning
+observation_model: PyTorchDebugObservation
+action_model: PyTorchDebugAction
+state_model: PyTorchDebugState
+entrypoint: src.pytorch_debug_env.server:app
+tasks:
+  - id: easy
+    name: Single-file bug detection
+    difficulty: easy
+  - id: medium
+    name: Multi-file root cause analysis
+    difficulty: medium
+  - id: hard
+    name: Silent failure diagnosis
+    difficulty: hard
+runtime:
+  framework: fastapi
+  container_port: 7860
