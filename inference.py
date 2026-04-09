@@ -64,13 +64,16 @@ Observation:
 {json.dumps(observation)[:8000]}
 History: {history}
 """
-    completion = client.chat.completions.create(
-        model=MODEL_NAME,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0,
-        max_tokens=500,
-    )
-    return (completion.choices[0].message.content or "").strip()
+    try:
+        completion = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
+            max_tokens=500,
+        )
+        return (completion.choices[0].message.content or "").strip()
+    except Exception as e:
+        return f'{{"error": "Failed to get model message: {str(e)}" }}'
 
 
 async def main():
@@ -84,11 +87,16 @@ async def main():
     log_start(task=TASK_NAME, env="pytorch-debug-env", model=MODEL_NAME)
 
     async with httpx.AsyncClient(timeout=60.0) as session:
-        reset_resp = await session.post(f"{ENV_URL}/reset", params={"task_id": TASK_NAME})
-        reset_resp.raise_for_status()
-        result = reset_resp.json()
-        session_id = result.get("session_id")
-        observation = result["observation"]
+        try:
+            reset_resp = await session.post(f"{ENV_URL}/reset", params={"task_id": TASK_NAME})
+            reset_resp.raise_for_status()
+            result = reset_resp.json()
+            session_id = result.get("session_id")
+            observation = result["observation"]
+        except Exception as exc:
+            log_step(step=0, action="", reward=0.0, done=True, error=f"Reset failed: {exc}")
+            log_end(success=False, steps=0, score=0.0, rewards=[])
+            return
 
         for step in range(1, MAX_STEPS + 1):
             if result.get("done"):
